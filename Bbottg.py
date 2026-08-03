@@ -2,8 +2,8 @@ import telebot
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 import os
 
-bot = telebot.TeleBot(os.getenv("8601674142:AAH4-VnMRRGLBIvHzropjPc0JMR2hSRAMic"))
-CHAT_ID = int(os.getenv("-1002576094434"))
+bot = telebot.TeleBot(os.getenv("BOT_TOKEN"))
+CHAT_ID = int(os.getenv("CHAT_ID"))
 
 @bot.message_handler(commands=['start'])
 def start(message):
