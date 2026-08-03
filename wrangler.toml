@@ -1,0 +1,9 @@
+name = "nerb-telegram-bot"
+main = "worker.js"
+compatibility_date = "2024-11-01"
+
+# Секреты (BOT_TOKEN, CHAT_ID, при желании WEBHOOK_SECRET) НЕ храните здесь.
+# Задавайте их командой:
+#   wrangler secret put BOT_TOKEN
+#   wrangler secret put CHAT_ID
+#   wrangler secret put WEBHOOK_SECRET   (опционально)
