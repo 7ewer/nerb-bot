@@ -7,8 +7,12 @@ compatibility_date = "2024-11-01"
 #   wrangler secret put BOT_TOKEN
 #   wrangler secret put CHAT_ID
 #   wrangler secret put WEBHOOK_SECRET   (опционально)
-[[kv_namespaces]]
-binding = "MEDIA_GROUPS"
-id = "514a1af6739042b1a76e3e3426ae59f8"
+[[durable_objects.bindings]]
+name = "MEDIA_GROUP_TRACKER"
+class_name = "MediaGroupTracker"
+
+[[migrations]]
+tag = "v1"
+new_classes = ["MediaGroupTracker"]
 [vars]
 BOT_USERNAME = "NERBbI_bot"

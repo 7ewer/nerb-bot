@@ -3,8 +3,9 @@
 //   BOT_TOKEN     — токен бота от @BotFather
 //   CHAT_ID       — id группы/канала клана (число, можно отрицательное)
 //   WEBHOOK_SECRET (опционально) — произвольная строка для доп. проверки запроса
-// KV-биндинг:
-//   MEDIA_GROUPS  — Workers KV namespace, нужен чтобы не отвечать на каждое фото из альбома отдельно
+// Durable Object биндинг:
+//   MEDIA_GROUP_TRACKER — класс MediaGroupTracker (экспортирован ниже в этом же файле),
+//   нужен чтобы не отвечать на каждое фото из альбома отдельно. Настраивается в wrangler.toml.
 
 const TELEGRAM_API = (token) => `https://api.telegram.org/bot${token}`;
 
@@ -83,27 +84,65 @@ async function handleAdmNerbCommand(env, message) {
   await sendMessage(env, message.chat.id, text);
 }
 
+// ---------- Durable Object: отсечение дублей альбомов фото ----------
+
+// Обращается к Durable Object по имени = media_group_id. Так как каждый
+// конкретный media_group_id всегда попадает в один и тот же экземпляр
+// объекта, и Durable Object обрабатывает свои запросы строго по одному —
+// только один вызов сможет "застолбить" группу первым.
+async function claimMediaGroup(env, mediaGroupId) {
+  const id = env.MEDIA_GROUP_TRACKER.idFromName(mediaGroupId);
+  const stub = env.MEDIA_GROUP_TRACKER.get(id);
+  const res = await stub.fetch("https://media-group-tracker/claim");
+  const result = await res.text();
+  return result === "first";
+}
+
+// Сам класс Durable Object. Экспортируется отдельно и подключается через
+// биндинг MEDIA_GROUP_TRACKER в wrangler.toml (см. инструкцию).
+export class MediaGroupTracker {
+  constructor(state) {
+    this.state = state;
+  }
+
+  async fetch() {
+    const already = await this.state.storage.get("claimed");
+    if (already) {
+      return new Response("duplicate");
+    }
+    await this.state.storage.put("claimed", true);
+    // Сам себя "забудет" через минуту, чтобы не копить данные вечно —
+    // на такой короткий срок жизни объекта это не обязательно, но не мешает.
+    await this.state.storage.setAlarm(Date.now() + 60_000);
+    return new Response("first");
+  }
+
+  async alarm() {
+    await this.state.storage.deleteAll();
+  }
+}
+
 // ==== Варианты ответов на фото ====
 // Меняй/добавляй строки прямо в этом списке, ничего больше трогать не нужно.
 const PHOTO_REPLIES = [
-  "Зачем мне твоё фото?",
-  "Ого, красиво! Но зачем ты мне это прислал?",
-  "Фото принято, но я не знаю, что с ним делать 🙂",
-  "Спасибо за фото! Только я не фотограф, я бот клана.",
-  "Классное фото, но по делу — заполни описание через /start.",
+  "Нах мне твоё фото?",
+  "И? хоть комуто это чтото дало?",
+  "Круто! Но не круче чем я)))",
+  "Я бот клана. Торжественно произношу.....  САМ иди нахуй",
+  "",
 ];
 
 async function handlePhoto(env, message) {
   // Telegram присылает альбом (несколько фото одним сообщением) как ОТДЕЛЬНЫЕ
-  // update'ы, но с одинаковым media_group_id. Чтобы не отвечать на каждое фото
-  // из альбома по отдельности — запоминаем в KV, что на эту группу уже ответили.
+  // update'ы с одинаковым media_group_id, причём почти одновременно. Чтобы не
+  // отвечать на каждое фото по отдельности, спрашиваем у Durable Object
+  // MediaGroupTracker: "я первый по этой группе?". Durable Object обрабатывает
+  // запросы строго по очереди (в отличие от KV, где из-за задержки
+  // распространения записи "первым" могут посчитать себя сразу несколько
+  // параллельных запросов) — поэтому дубли гарантированно отсекаются.
   if (message.media_group_id) {
-    const key = `mg:${message.media_group_id}`;
-    const alreadyHandled = await env.MEDIA_GROUPS.get(key);
-    if (alreadyHandled) {
-      return;
-    }
-    await env.MEDIA_GROUPS.put(key, "1", { expirationTtl: 60 });
+    const isFirst = await claimMediaGroup(env, message.media_group_id);
+    if (!isFirst) return;
   }
 
   const text = PHOTO_REPLIES[Math.floor(Math.random() * PHOTO_REPLIES.length)];
@@ -123,7 +162,7 @@ async function handlePhoto(env, message) {
 // Добавляй/меняй элементы массива как угодно — больше ничего трогать не нужно.
 const CUSTOM_TRIGGERS = [
   {
-  triggers: ["Иди нахуй", "нахуй сходи", "даун?" ],
+  triggers: ["Иди нахуй", "сходи нахуй"],
   reply: "Тебе помочь чем-то? Я просто бот меня не програмировали идти на то самое место! Но 7ewer за 320 юси добавит в в меня эту функцию!!!",
 },
   // {
