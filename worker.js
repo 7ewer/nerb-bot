@@ -3,6 +3,8 @@
 //   BOT_TOKEN     — токен бота от @BotFather
 //   CHAT_ID       — id группы/канала клана (число, можно отрицательное)
 //   WEBHOOK_SECRET (опционально) — произвольная строка для доп. проверки запроса
+// KV-биндинг:
+//   MEDIA_GROUPS  — Workers KV namespace, нужен чтобы не отвечать на каждое фото из альбома отдельно
 
 const TELEGRAM_API = (token) => `https://api.telegram.org/bot${token}`;
 
@@ -81,12 +83,105 @@ async function handleAdmNerbCommand(env, message) {
   await sendMessage(env, message.chat.id, text);
 }
 
+// ==== Варианты ответов на фото ====
+// Меняй/добавляй строки прямо в этом списке, ничего больше трогать не нужно.
+const PHOTO_REPLIES = [
+  "Зачем мне твоё фото?",
+  "Ого, красиво! Но зачем ты мне это прислал?",
+  "Фото принято, но я не знаю, что с ним делать 🙂",
+  "Спасибо за фото! Только я не фотограф, я бот клана.",
+  "Классное фото, но по делу — заполни описание через /start.",
+];
+
 async function handlePhoto(env, message) {
+  // Telegram присылает альбом (несколько фото одним сообщением) как ОТДЕЛЬНЫЕ
+  // update'ы, но с одинаковым media_group_id. Чтобы не отвечать на каждое фото
+  // из альбома по отдельности — запоминаем в KV, что на эту группу уже ответили.
+  if (message.media_group_id) {
+    const key = `mg:${message.media_group_id}`;
+    const alreadyHandled = await env.MEDIA_GROUPS.get(key);
+    if (alreadyHandled) {
+      return;
+    }
+    await env.MEDIA_GROUPS.put(key, "1", { expirationTtl: 60 });
+  }
+
+  const text = PHOTO_REPLIES[Math.floor(Math.random() * PHOTO_REPLIES.length)];
+
   await tg(env, "sendMessage", {
     chat_id: message.chat.id,
-    text: "Зачем мне твоё фото?",
+    text,
     reply_to_message_id: message.message_id,
   });
+}
+
+// ==== Триггерные ответы ====
+// Список фраз, на которые бот отвечает заданным текстом.
+// Формат: { triggers: ["фраза1", "фраза2", ...], reply: "текст ответа" }
+// Совпадение ищется как ПОДСТРОКА, без учёта регистра (например, триггер
+// "спасибо" сработает и на "Спасибо большое!").
+// Добавляй/меняй элементы массива как угодно — больше ничего трогать не нужно.
+const CUSTOM_TRIGGERS = [
+  {
+  triggers: ["Иди нахуй", "нахуй сходи", "даун?" ],
+  reply: "Тебе помочь чем-то? Я просто бот меня не програмировали идти на то самое место! Но 7ewer за 320 юси добавит в в меня эту функцию!!!",
+},
+  // {
+  //   triggers: ["привет", "здравствуй"],
+  //   reply: "Привет! Чем могу помочь?",
+  // },
+  // {
+  //   triggers: ["правила"],
+  //   reply: "Правила клана можно найти в закреплённом сообщении.",
+  // },
+];
+
+function findCustomReply(text) {
+  const lower = text.toLowerCase();
+  for (const item of CUSTOM_TRIGGERS) {
+    for (const trigger of item.triggers) {
+      if (lower.includes(trigger.toLowerCase())) {
+        return item.reply;
+      }
+    }
+  }
+  return null;
+}
+
+// Проверяет, что сообщение реально адресовано боту:
+// - в личных сообщениях — всегда
+// - в группах — если это ответ (reply) на сообщение бота, либо в тексте
+//   есть упоминание @username бота (задаётся через env.BOT_USERNAME)
+function isAddressedToBot(env, message) {
+  if (message.chat.type === "private") return true;
+
+  const repliedToBot = !!(
+    message.reply_to_message &&
+    message.reply_to_message.from &&
+    message.reply_to_message.from.is_bot
+  );
+  if (repliedToBot) return true;
+
+  if (env.BOT_USERNAME) {
+    const mention = `@${env.BOT_USERNAME}`.toLowerCase();
+    if ((message.text || "").toLowerCase().includes(mention)) return true;
+  }
+
+  return false;
+}
+
+async function handleCustomTriggers(env, message) {
+  if (!isAddressedToBot(env, message)) return false;
+
+  const reply = findCustomReply(message.text || "");
+  if (!reply) return false;
+
+  await tg(env, "sendMessage", {
+    chat_id: message.chat.id,
+    text: reply,
+    reply_to_message_id: message.message_id,
+  });
+  return true;
 }
 
 const DESCRIPTION_TEMPLATE =
@@ -192,6 +287,9 @@ async function handleUpdate(env, update) {
       await handleAdmNerbCommand(env, message);
       return;
     }
+
+    const wasCustomReplyHandled = await handleCustomTriggers(env, message);
+    if (wasCustomReplyHandled) return;
 
     await handleDescriptionText(env, message);
   }

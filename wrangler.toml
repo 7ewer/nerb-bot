@@ -10,3 +10,5 @@ compatibility_date = "2024-11-01"
 [[kv_namespaces]]
 binding = "MEDIA_GROUPS"
 id = "514a1af6739042b1a76e3e3426ae59f8"
+[vars]
+BOT_USERNAME = "NERBbI_bot"
