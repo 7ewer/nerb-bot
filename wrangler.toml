@@ -13,6 +13,6 @@ class_name = "MediaGroupTracker"
 
 [[migrations]]
 tag = "v1"
-new_classes = ["MediaGroupTracker"]
+new_sqlite_classes = ["MediaGroupTracker"]
 [vars]
 BOT_USERNAME = "NERBbI_bot"
